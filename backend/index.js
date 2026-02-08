@@ -14,12 +14,17 @@ dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://real-time-chat-call-application.onrender.com"
+];
 
 // middleware
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: allowedOrigins,
   credentials: true
 }));
+
 app.use(express.json());
 
 // routes
@@ -31,12 +36,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/users", userRoutes);
 // socket
-const io = new Server(server, {
-  cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"],
-  },
-});
+
 
 // map of userId -> socketId for signaling
 const onlineUsers = new Map();
@@ -135,9 +135,11 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log("❌ Socket disconnected:", socket.userId);
-  });
+socket.on("disconnect", () => {
+  console.log("❌ Socket disconnected:", socket.userId);
+  onlineUsers.delete(socket.userId);
+});
+
 });
 
 
