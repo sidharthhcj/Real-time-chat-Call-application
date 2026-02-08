@@ -210,83 +210,120 @@ export default function Chat() {
   };
 
   /* ================= UI ================= */
-  return (
-    <div className="flex h-screen bg-slate-900 text-white overflow-hidden">
+return (
+  <div className="h-screen flex bg-slate-900 text-white">
 
-      {/* USERS LIST */}
-      <div
-        className={`${showUsers ? "flex" : "hidden"} md:flex w-full md:w-1/4 border-r border-slate-700 flex-col`}
-      >
-        <div className="p-4 font-bold bg-slate-950">💬 Chats</div>
-        <input
-          className="m-2 px-3 py-2 bg-slate-800 rounded"
-          placeholder="Search user..."
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <div className="flex-1 overflow-y-auto">
-          {users
-            .filter((u) => u.username.toLowerCase().includes(search.toLowerCase()))
-            .map((u) => (
-              <div
-                key={u._id}
-                onClick={() => joinChat(u)}
-                className="p-4 hover:bg-slate-800 cursor-pointer"
-              >
-                👤 {u.username}
-              </div>
-            ))}
-        </div>
-      </div>
+    {/* ================= USERS LIST ================= */}
+    <div
+      className={`${showUsers ? "flex" : "hidden"} md:flex w-full md:w-1/4 flex-col border-r border-slate-700`}
+    >
+      <div className="p-4 font-bold bg-slate-950">💬 Chats</div>
 
-      {/* CHAT PANEL */}
-      <div className={`${showUsers ? "hidden" : "flex"} md:flex flex-col w-full md:w-3/4`}>
+      <input
+        className="m-2 px-3 py-2 bg-slate-800 rounded"
+        placeholder="Search user..."
+        onChange={(e) => setSearch(e.target.value)}
+      />
 
-        {/* HEADER */}
-        <div className="p-3 bg-slate-950 flex items-center gap-2 border-b">
-          <button className="md:hidden" onClick={() => setShowUsers(true)}>←</button>
-          <span className="flex-1 font-semibold">
-            {selectedUser?.username || "Chat App"}
-          </span>
-          {selectedUser && callState === "idle" && (
-            <button onClick={startCall} className="bg-indigo-600 px-3 py-1 rounded">
-              📞
-            </button>
-          )}
-        </div>
-
-        {/* VIDEO */}
-        {(callState !== "idle") && (
-          <div className="flex gap-2 p-2">
-            <video ref={localVideoRef} autoPlay muted className="w-1/3 bg-black" />
-            <video ref={remoteVideoRef} autoPlay className="flex-1 bg-black" />
-          </div>
-        )}
-
-        {/* MESSAGES */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {messages.map((m) => (
-            <div key={m._id} className={`flex ${m.sender === "me" ? "justify-end" : ""}`}>
-              <div className="bg-slate-700 px-3 py-2 rounded m-1">{m.message}</div>
+      <div className="flex-1 overflow-y-auto">
+        {users
+          .filter((u) => u.username.toLowerCase().includes(search.toLowerCase()))
+          .map((u) => (
+            <div
+              key={u._id}
+              onClick={() => joinChat(u)}
+              className="p-4 cursor-pointer hover:bg-slate-800"
+            >
+              👤 {u.username}
             </div>
           ))}
-        </div>
-
-        {/* INPUT */}
-        {selectedUser && (
-          <div className="p-2 flex gap-2 border-t bg-slate-950">
-            <input
-              className="flex-1 px-3 py-2 bg-slate-800 rounded"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="Type message..."
-            />
-            <button onClick={sendMessage} className="bg-green-600 px-4 rounded">
-              Send
-            </button>
-          </div>
-        )}
       </div>
     </div>
-  );
+
+    {/* ================= CHAT PANEL ================= */}
+    <div className={`${showUsers ? "hidden" : "flex"} md:flex flex-col w-full md:w-3/4`}>
+
+      {/* 🔝 HEADER */}
+      <div className="flex items-center gap-3 px-3 py-2 bg-slate-950 border-b border-slate-700">
+        {/* Back */}
+        <button className="md:hidden text-xl" onClick={() => setShowUsers(true)}>
+          ←
+        </button>
+
+        {/* Name */}
+        <span className="flex-1 font-semibold truncate">
+          {selectedUser?.username || "Chat App"}
+        </span>
+
+        {/* Call */}
+        {selectedUser && callState === "idle" && (
+          <button
+            onClick={startCall}
+            className="bg-indigo-600 px-3 py-2 rounded"
+          >
+            📞
+          </button>
+        )}
+
+        {/* Logout */}
+        <button
+          onClick={() => {
+            localStorage.clear();
+            navigate("/login");
+          }}
+          className="bg-red-600 px-3 py-2 rounded text-sm"
+        >
+          Logout
+        </button>
+      </div>
+
+      {/* 📞 CALL VIDEO */}
+      {callState !== "idle" && (
+        <div className="flex gap-2 p-2 bg-black">
+          <video ref={localVideoRef} autoPlay muted className="w-1/3 rounded" />
+          <video ref={remoteVideoRef} autoPlay className="flex-1 rounded" />
+        </div>
+      )}
+
+      {/* 💬 MESSAGES */}
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-2">
+        {messages.map((m) => (
+          <div
+            key={m._id}
+            className={`flex ${m.sender === "me" ? "justify-end" : "justify-start"}`}
+          >
+            <div
+              className={`px-4 py-2 rounded-lg text-sm max-w-[75%]
+                ${m.sender === "me"
+                  ? "bg-blue-600"
+                  : "bg-slate-700"}`}
+            >
+              {m.message}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ⌨️ INPUT (FIXED FOR MOBILE) */}
+      {selectedUser && (
+        <div className="sticky bottom-0 bg-slate-950 border-t border-slate-700 p-2 flex gap-2">
+          <input
+            className="flex-1 px-3 py-2 rounded bg-slate-800 outline-none"
+            placeholder="Type message..."
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          />
+          <button
+            onClick={sendMessage}
+            className="bg-green-600 px-4 rounded"
+          >
+            Send
+          </button>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 }
