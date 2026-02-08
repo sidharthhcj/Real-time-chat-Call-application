@@ -195,7 +195,7 @@ export default function Chat() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     socket?.disconnect();
-    navigate("/login");
+    navigate("/");
   };
 
   // --- WebRTC helpers ---
