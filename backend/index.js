@@ -1,7 +1,9 @@
+import dotenv from "dotenv";
+dotenv.config();
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
-import dotenv from "dotenv";
+
 import http from "http";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
@@ -11,7 +13,7 @@ import messageRoutes from "./routes/messageRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import Message from "./models/Message.js";
 import aiRoutes from "./routes/aiRoutes.js";
-dotenv.config();
+
 
 /* ================= APP & SERVER ================= */
 const app = express();
