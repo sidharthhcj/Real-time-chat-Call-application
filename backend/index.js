@@ -29,10 +29,7 @@ const allowedOrigins = [
   "https://real-time-chat-call-application.onrender.com"
 ];
 
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://real-time-chat-call-application.onrender.com"
-];
+
 
 app.use(cors({
   origin: function (origin, callback) {
