@@ -232,9 +232,19 @@ export default function Chat() {
       }
     };
 
-    pc.ontrack = (e) => {
-      setRemoteStream(e.streams[0]);
-    };
+pc.ontrack = (event) => {
+  const [stream] = event.streams;
+
+  if (!stream) return;
+
+  setRemoteStream(stream);
+
+  // 🔥 force attach tracks (fixes no-video issue)
+  stream.getTracks().forEach(track => {
+    if (track.readyState === "ended") return;
+  });
+};
+
 
     pcRef.current = pc;
     return pc;
@@ -261,27 +271,45 @@ export default function Chat() {
     }
   };
 
-  const acceptCall = async () => {
-    if (!incomingFrom || !pendingOfferRef.current) return;
-    setCallState("in-call");
-    const pc = createPeerConnection(incomingFrom);
+ const acceptCall = async () => {
+  if (!incomingFrom || !pendingOfferRef.current) return;
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      setLocalStream(stream);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+  setCallState("in-call");
+  const pc = createPeerConnection(incomingFrom);
 
-      await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: true,
+    });
 
-      socket.emit("answer-call", { to: incomingFrom, answer });
-      pendingOfferRef.current = null;
-    } catch (err) {
-      console.error("acceptCall error", err);
-      cleanupPeer();
-    }
-  };
+    setLocalStream(stream);
+
+    // 🔥 ADD TRACKS FIRST
+    stream.getTracks().forEach(track => {
+      pc.addTrack(track, stream);
+    });
+
+    // 🔥 THEN set offer
+    await pc.setRemoteDescription(
+      new RTCSessionDescription(pendingOfferRef.current)
+    );
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    socket.emit("answer-call", {
+      to: incomingFrom,
+      answer,
+    });
+
+    pendingOfferRef.current = null;
+  } catch (err) {
+    console.error("acceptCall error:", err);
+    cleanupPeer();
+  }
+};
+
 
   const declineCall = () => {
     if (incomingFrom) socket.emit("end-call", { to: incomingFrom });
