@@ -199,142 +199,77 @@ export default function Chat() {
   };
 
   // --- WebRTC helpers ---
-  // const cleanupPeer = () => {
-  //   try {
-  //     if (pcRef.current) {
-  //       pcRef.current.ontrack = null;
-  //       pcRef.current.onicecandidate = null;
-  //       pcRef.current.close();
-  //       pcRef.current = null;
-  //     }
-  //   } catch (e) {
-  //     console.warn("Error cleaning peer:", e);
-  //   }
+  const cleanupPeer = () => {
+    try {
+      if (pcRef.current) {
+        pcRef.current.ontrack = null;
+        pcRef.current.onicecandidate = null;
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+    } catch (e) {
+      console.warn("Error cleaning peer:", e);
+    }
 
-  //   if (localStream) {
-  //     localStream.getTracks().forEach((t) => t.stop());
-  //     setLocalStream(null);
-  //   }
-  //   setRemoteStream(null);
-  //   setIncomingFrom(null);
-  //   pendingOfferRef.current = null;
-  //   setCallState("idle");
-  // };
-const cleanupPeer = () => {
-  console.log("🧹 Cleaning up call");
-
-  // 1️⃣ Stop media tracks
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    setLocalStream(null);
-  }
-
-  if (remoteStream) {
-    remoteStream.getTracks().forEach(track => track.stop());
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      setLocalStream(null);
+    }
     setRemoteStream(null);
-  }
-
-  // 2️⃣ Reset video elements
-  if (localVideoRef.current) {
-    localVideoRef.current.srcObject = null;
-  }
-  if (remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = null;
-  }
-
-  // 3️⃣ Close peer connection
-  if (pcRef.current) {
-    pcRef.current.onicecandidate = null;
-    pcRef.current.ontrack = null;
-    pcRef.current.close();
-    pcRef.current = null;
-  }
-
-  // 4️⃣ Reset states
-  pendingOfferRef.current = null;
-  setIncomingFrom(null);
-  setCallState("idle");
-};
-
-//   const createPeerConnection = (remoteUserId) => {
-//     const pc = new RTCPeerConnection({
-//       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-//     });
-
-//     pc.onicecandidate = (event) => {
-//       if (event.candidate) {
-//         socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
-//       }
-//     };
-
-// pc.ontrack = (event) => {
-//   const [stream] = event.streams;
-
-//   if (!stream) return;
-
-//   setRemoteStream(stream);
-
-//   // 🔥 force attach tracks (fixes no-video issue)
-//   stream.getTracks().forEach(track => {
-//     if (track.readyState === "ended") return;
-//   });
-// };
-
-
-//     pcRef.current = pc;
-//     return pc;
-//   };
-const createPeerConnection = (remoteUserId) => {
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-
-  pc.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit("ice-candidate", {
-        to: remoteUserId,
-        candidate: event.candidate,
-      });
-    }
+    setIncomingFrom(null);
+    pendingOfferRef.current = null;
+    setCallState("idle");
   };
 
-  pc.ontrack = (event) => {
-    setRemoteStream(event.streams[0]);
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = event.streams[0];
-    }
+  const createPeerConnection = (remoteUserId) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
+      }
+    };
+
+pc.ontrack = (event) => {
+  const [stream] = event.streams;
+
+  if (!stream) return;
+
+  setRemoteStream(stream);
+
+  // 🔥 force attach tracks (fixes no-video issue)
+  stream.getTracks().forEach(track => {
+    if (track.readyState === "ended") return;
+  });
+};
+
+
+    pcRef.current = pc;
+    return pc;
   };
 
-  pcRef.current = pc;
-  return pc;
-};
+  const startCall = async () => {
+    if (!selectedUser) return alert("Select a user to call");
+    setCallState("calling");
 
- const startCall = async () => {
-  cleanupPeer(); // 🔥 VERY IMPORTANT
+    const pc = createPeerConnection(selectedUser._id);
 
-  const pc = createPeerConnection(selectedUser._id);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      setLocalStream(stream);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: true,
-  });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-  setLocalStream(stream);
-  localVideoRef.current.srcObject = stream;
-
-  stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-
-  socket.emit("call-user", {
-    to: selectedUser._id,
-    offer,
-  });
-
-  setCallState("calling");
-};
-
+      socket.emit("call-user", { to: selectedUser._id, offer });
+    } catch (err) {
+      console.error("startCall error", err);
+      cleanupPeer();
+    }
+  };
 
  const acceptCall = async () => {
   if (!incomingFrom || !pendingOfferRef.current) return;
