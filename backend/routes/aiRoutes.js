@@ -8,55 +8,69 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// auth middleware
+// 🔐 AUTH
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.sendStatus(401);
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.id;
     next();
   } catch {
-    res.sendStatus(403);
+    return res.sendStatus(403);
   }
 };
 
-// 🔹 SMART REPLY
+/* ================= SMART REPLY ================= */
 router.post("/smart-reply", auth, async (req, res) => {
   const { lastMessage } = req.body;
+  if (!lastMessage) return res.json({ replies: [] });
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",   // ✅ NEW MODEL
       messages: [
         {
+          role: "system",
+          content: "You are a chat assistant. Reply short and friendly."
+        },
+        {
           role: "user",
-          content: `Give 3 short chat replies for: "${lastMessage}"`
+          content: `Give exactly 3 short chat replies for: "${lastMessage}"`
         }
       ],
+      temperature: 0.7,
     });
 
-    res.json({
-      replies: completion.choices[0].message.content
-        .split("\n")
-        .filter(Boolean)
-    });
+    const text = completion.choices[0].message.content;
+
+    const replies = text
+      .split("\n")
+      .map(r => r.replace(/^\d+[\).\s]*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    res.json({ replies });
+
   } catch (err) {
-    res.status(500).json({ error: "AI failed" });
+    console.error("AI ERROR:", err.message);
+    res.status(500).json({ error: "AI smart reply failed" });
   }
 });
 
-// 🔹 CHAT SUMMARY
+/* ================= CHAT SUMMARY ================= */
 router.post("/summary", auth, async (req, res) => {
   const { messages } = req.body;
+  if (!messages?.length) return res.json({ summary: "" });
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "user",
-          content: `Summarize this chat briefly:\n${messages.join("\n")}`
+          content: `Summarize this chat in 2 lines:\n${messages.join("\n")}`
         }
       ],
     });
@@ -64,7 +78,9 @@ router.post("/summary", auth, async (req, res) => {
     res.json({
       summary: completion.choices[0].message.content
     });
-  } catch {
+
+  } catch (err) {
+    console.error("SUMMARY ERROR:", err.message);
     res.status(500).json({ error: "Summary failed" });
   }
 });
