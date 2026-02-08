@@ -10,7 +10,7 @@ import authRoutes from "./routes/authRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import Message from "./models/Message.js";
-
+import aiRoutes from "./routes/aiRoutes.js";
 dotenv.config();
 
 /* ================= APP & SERVER ================= */
@@ -39,7 +39,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/users", userRoutes);
-
+app.use("/api/ai", aiRoutes);
 /* ================= SOCKET.IO ================= */
 const io = new Server(server, {
   cors: {
