@@ -41,7 +41,9 @@ export default function Chat() {
 
     const fetchUsers = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/users", {
+        const res = await axios.get(
+         `${import.meta.env.VITE_BACKEND_URL}/api/users`,
+           {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -60,7 +62,7 @@ export default function Chat() {
   useEffect(() => {
     if (!token) return;
 
-    const s = io("http://localhost:5000", {
+    const s = io(import.meta.env.VITE_BACKEND_URL, {
       transports: ["websocket"],
       auth: {
         token,
@@ -129,7 +131,7 @@ export default function Chat() {
   const loadChatHistory = async (roomId) => {
     try {
       setLoading(true);
-      const res = await axios.get(`http://localhost:5000/api/messages/${roomId}`, {
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/messages/${roomId}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
