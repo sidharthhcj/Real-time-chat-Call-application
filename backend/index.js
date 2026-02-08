@@ -23,18 +23,11 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
+  origin: "https://real-time-chat-call-application.onrender.com",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
 
 app.use(express.json());
 
@@ -50,11 +43,11 @@ app.use("/api/users", userRoutes);
 /* ================= SOCKET.IO (🔥 MISSING PART FIXED) ================= */
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true
+    origin: "https://real-time-chat-call-application.onrender.com",
+    methods: ["GET", "POST"]
   }
 });
+
 
 /* ================= SOCKET AUTH ================= */
 const onlineUsers = new Map();
