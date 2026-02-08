@@ -12,49 +12,66 @@ export default function Chat() {
   const [message, setMessage] = useState("");
   const [currentRoom, setCurrentRoom] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // 🔥 WebRTC
+  // WebRTC / call states
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const pcRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-
-  const [callState, setCallState] = useState("idle"); // idle | calling | incoming | in-call
+  const [callState, setCallState] = useState("idle"); // idle, calling, incoming, in-call
   const [incomingFrom, setIncomingFrom] = useState(null);
   const pendingOfferRef = useRef(null);
 
   const navigate = useNavigate();
 
+  // 🔹 Logged-in user info
   const loggedUser = JSON.parse(localStorage.getItem("user"));
   const token = localStorage.getItem("token");
+
+  // 🔹 Get user ID from JWT
   const myId = token ? JSON.parse(atob(token.split(".")[1])).id : null;
 
+  // 🔹 Messages for current room
   const messages = messagesByRoom[currentRoom] || [];
 
-  /* ================= USERS ================= */
+  // 🔹 Fetch all users (except me)
   useEffect(() => {
-    if (!token) return navigate("/login");
+    if (!token) {
+      navigate("/login");
+      return;
+    }
 
-    axios
-      .get(`${import.meta.env.VITE_BACKEND_URL}/api/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((res) => setUsers(res.data))
-      .catch(() => alert("Failed to load users"));
+    const fetchUsers = async () => {
+      try {
+        const res = await axios.get(
+         `${import.meta.env.VITE_BACKEND_URL}/api/users`,
+           {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        setUsers(res.data);
+      } catch (err) {
+        console.error("Error fetching users:", err);
+        alert("Failed to load users");
+      }
+    };
+
+    fetchUsers();
   }, [token, navigate]);
 
-  /* ================= SOCKET ================= */
+  // 🔹 Socket connection
   useEffect(() => {
     if (!token) return;
 
     const s = io(import.meta.env.VITE_BACKEND_URL, {
       transports: ["websocket"],
-      auth: { token },
+      auth: {
+        token,
+      },
     });
 
     setSocket(s);
 
+    // chat message
     s.on("receive-message", (data) => {
       setMessagesByRoom((prev) => ({
         ...prev,
@@ -65,30 +82,44 @@ export default function Chat() {
       }));
     });
 
+    // incoming call (offer)
     s.on("incoming-call", ({ from, offer }) => {
       pendingOfferRef.current = offer;
       setIncomingFrom(from);
       setCallState("incoming");
     });
 
-    s.on("call-accepted", async ({ answer }) => {
-      if (pcRef.current && answer) {
-        await pcRef.current.setRemoteDescription(
-          new RTCSessionDescription(answer)
-        );
-        setCallState("in-call");
+    // call accepted (answer)
+    s.on("call-accepted", async ({ from, answer }) => {
+      try {
+        if (pcRef.current && answer) {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          setCallState("in-call");
+        }
+      } catch (err) {
+        console.error("Error applying remote answer:", err);
       }
     });
 
-    s.on("ice-candidate", async ({ candidate }) => {
-      if (pcRef.current && candidate) {
-        await pcRef.current.addIceCandidate(
-          new RTCIceCandidate(candidate)
-        );
+    // ICE candidate from remote
+    s.on("ice-candidate", async ({ from, candidate }) => {
+      try {
+        if (pcRef.current && candidate) {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      } catch (err) {
+        console.error("Error adding remote ICE candidate:", err);
       }
     });
 
-    s.on("end-call", () => cleanupPeer());
+    // remote ended call
+    s.on("end-call", ({ from }) => {
+      cleanupPeer();
+    });
+
+    s.on("error", (err) => {
+      console.error("Socket error:", err);
+    });
 
     return () => {
       cleanupPeer();
@@ -96,86 +127,113 @@ export default function Chat() {
     };
   }, [token]);
 
-  /* ================= CHAT ================= */
-  const joinChat = async (user) => {
+  // 🔹 Load chat history when selecting user
+  const loadChatHistory = async (roomId) => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/messages/${roomId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const formattedMessages = res.data.map((msg) => ({
+        _id: msg._id,
+        message: msg.content,
+        sender: msg.sender._id === myId ? "me" : msg.sender._id,
+      }));
+
+      setMessagesByRoom((prev) => ({
+        ...prev,
+        [roomId]: formattedMessages,
+      }));
+    } catch (err) {
+      console.error("Error loading chat history:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔹 Join private room and load history
+  const joinChat = (user) => {
     setSelectedUser(user);
     const roomId = [myId, user._id].sort().join("_");
     socket.emit("join-room", roomId);
     setCurrentRoom(roomId);
-
-    setLoading(true);
-    const res = await axios.get(
-      `${import.meta.env.VITE_BACKEND_URL}/api/messages/${roomId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    setMessagesByRoom((prev) => ({
-      ...prev,
-      [roomId]: res.data.map((m) => ({
-        _id: m._id,
-        message: m.content,
-        sender: m.sender._id === myId ? "me" : m.sender._id,
-      })),
-    }));
-    setLoading(false);
+    loadChatHistory(roomId);
   };
 
-  const sendMessage = () => {
-    if (!message.trim()) return;
+  // 🔹 Send private message
+  const sendMessage = async () => {
+    if (!message.trim() || !currentRoom || !socket) return;
 
-    socket.emit("send-message", {
-      roomId: currentRoom,
-      message,
-      receiver: selectedUser._id,
-    });
+    try {
+      socket.emit("send-message", {
+        roomId: currentRoom,
+        message,
+        receiver: selectedUser._id,
+      });
 
-    setMessagesByRoom((prev) => ({
-      ...prev,
-      [currentRoom]: [
-        ...(prev[currentRoom] || []),
-        { message, sender: "me", _id: Date.now() },
-      ],
-    }));
+      // Add to local state
+      setMessagesByRoom((prev) => ({
+        ...prev,
+        [currentRoom]: [
+          ...(prev[currentRoom] || []),
+          { message, sender: "me", _id: Date.now() },
+        ],
+      }));
 
-    setMessage("");
+      setMessage("");
+    } catch (err) {
+      console.error("Error sending message:", err);
+      alert("Failed to send message");
+    }
   };
 
-  /* ================= WEBRTC ================= */
+  // 🔹 Logout function
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    socket?.disconnect();
+    navigate("/");
+  };
+
+  // --- WebRTC helpers ---
   const cleanupPeer = () => {
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
+    try {
+      if (pcRef.current) {
+        pcRef.current.ontrack = null;
+        pcRef.current.onicecandidate = null;
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+    } catch (e) {
+      console.warn("Error cleaning peer:", e);
     }
 
-    localStream?.getTracks().forEach((t) => t.stop());
-    remoteStream?.getTracks().forEach((t) => t.stop());
-
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-
-    setLocalStream(null);
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      setLocalStream(null);
+    }
     setRemoteStream(null);
     setIncomingFrom(null);
     pendingOfferRef.current = null;
     setCallState("idle");
   };
 
-  const createPeerConnection = (remoteId) => {
+  const createPeerConnection = (remoteUserId) => {
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket.emit("ice-candidate", { to: remoteId, candidate: e.candidate });
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
       }
     };
 
     pc.ontrack = (e) => {
       setRemoteStream(e.streams[0]);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = e.streams[0];
-      }
     };
 
     pcRef.current = pc;
@@ -183,51 +241,56 @@ export default function Chat() {
   };
 
   const startCall = async () => {
+    if (!selectedUser) return alert("Select a user to call");
     setCallState("calling");
+
     const pc = createPeerConnection(selectedUser._id);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      setLocalStream(stream);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-    setLocalStream(stream);
-    localVideoRef.current.srcObject = stream;
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    socket.emit("call-user", { to: selectedUser._id, offer });
+      socket.emit("call-user", { to: selectedUser._id, offer });
+    } catch (err) {
+      console.error("startCall error", err);
+      cleanupPeer();
+    }
   };
 
   const acceptCall = async () => {
+    if (!incomingFrom || !pendingOfferRef.current) return;
+    setCallState("in-call");
     const pc = createPeerConnection(incomingFrom);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      setLocalStream(stream);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-    setLocalStream(stream);
-    localVideoRef.current.srcObject = stream;
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
-    await pc.setRemoteDescription(
-      new RTCSessionDescription(pendingOfferRef.current)
-    );
+      socket.emit("answer-call", { to: incomingFrom, answer });
+      pendingOfferRef.current = null;
+    } catch (err) {
+      console.error("acceptCall error", err);
+      cleanupPeer();
+    }
+  };
 
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    socket.emit("answer-call", { to: incomingFrom, answer });
-    setCallState("in-call");
+  const declineCall = () => {
+    if (incomingFrom) socket.emit("end-call", { to: incomingFrom });
+    cleanupPeer();
   };
 
   const endCall = () => {
-    socket.emit("end-call", {
-      to: incomingFrom || selectedUser?._id,
-    });
+    const otherId = callState === "in-call" ? (incomingFrom === null ? selectedUser?._id : incomingFrom) : selectedUser?._id;
+    if (otherId) socket.emit("end-call", { to: otherId });
     cleanupPeer();
   };
 
