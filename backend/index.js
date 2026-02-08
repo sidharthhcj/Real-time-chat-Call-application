@@ -14,16 +14,40 @@ dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+// const allowedOrigins = [
+//   "http://localhost:5173",
+//   "https://real-time-chat-call-application.onrender.com"
+// ];
+
+// // middleware
+// app.use(cors({
+//   origin: allowedOrigins,
+//   credentials: true
+// }));
 const allowedOrigins = [
   "http://localhost:5173",
   "https://real-time-chat-call-application.onrender.com"
 ];
 
-// middleware
 app.use(cors({
-  origin: allowedOrigins,
-  credentials: true
+  origin: function (origin, callback) {
+    // allow requests with no origin (Postman, mobile apps)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+// 🔥 VERY IMPORTANT (preflight fix)
+app.options("*", cors());
+
 
 app.use(express.json());
 
