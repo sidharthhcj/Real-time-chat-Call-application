@@ -29,11 +29,14 @@ const allowedOrigins = [
   "https://real-time-chat-call-application.onrender.com"
 ];
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://real-time-chat-call-application.onrender.com"
+];
+
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (Postman, mobile apps)
     if (!origin) return callback(null, true);
-
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -45,8 +48,6 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-// 🔥 VERY IMPORTANT (preflight fix)
-app.options("*", cors());
 
 
 app.use(express.json());
