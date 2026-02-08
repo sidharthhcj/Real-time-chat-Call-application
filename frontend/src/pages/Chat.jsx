@@ -12,61 +12,66 @@ export default function Chat() {
   const [message, setMessage] = useState("");
   const [currentRoom, setCurrentRoom] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // WebRTC
+  // WebRTC / call states
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const pcRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-
-  const [callState, setCallState] = useState("idle");
+  const [callState, setCallState] = useState("idle"); // idle, calling, incoming, in-call
   const [incomingFrom, setIncomingFrom] = useState(null);
   const pendingOfferRef = useRef(null);
 
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+
+  // 🔹 Logged-in user info
   const loggedUser = JSON.parse(localStorage.getItem("user"));
+  const token = localStorage.getItem("token");
+
+  // 🔹 Get user ID from JWT
   const myId = token ? JSON.parse(atob(token.split(".")[1])).id : null;
 
+  // 🔹 Messages for current room
   const messages = messagesByRoom[currentRoom] || [];
 
-  /* ================= VIDEO STREAM FIX ================= */
+  // 🔹 Fetch all users (except me)
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+    if (!token) {
+      navigate("/login");
+      return;
     }
-  }, [localStream]);
 
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+    const fetchUsers = async () => {
+      try {
+        const res = await axios.get(
+         `${import.meta.env.VITE_BACKEND_URL}/api/users`,
+           {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        setUsers(res.data);
+      } catch (err) {
+        console.error("Error fetching users:", err);
+        alert("Failed to load users");
+      }
+    };
 
-  /* ================= FETCH USERS ================= */
-  useEffect(() => {
-    if (!token) return navigate("/");
+    fetchUsers();
+  }, [token, navigate]);
 
-    axios
-      .get(`${import.meta.env.VITE_BACKEND_URL}/api/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((res) => setUsers(res.data))
-      .catch(() => alert("Failed to load users"));
-  }, []);
-
-  /* ================= SOCKET ================= */
+  // 🔹 Socket connection
   useEffect(() => {
     if (!token) return;
 
     const s = io(import.meta.env.VITE_BACKEND_URL, {
       transports: ["websocket"],
-      auth: { token },
+      auth: {
+        token,
+      },
     });
 
     setSocket(s);
 
+    // chat message
     s.on("receive-message", (data) => {
       setMessagesByRoom((prev) => ({
         ...prev,
@@ -77,169 +82,404 @@ export default function Chat() {
       }));
     });
 
+    // incoming call (offer)
     s.on("incoming-call", ({ from, offer }) => {
       pendingOfferRef.current = offer;
       setIncomingFrom(from);
       setCallState("incoming");
     });
 
-    s.on("call-accepted", async ({ answer }) => {
-      await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-      setCallState("in-call");
+    // call accepted (answer)
+    s.on("call-accepted", async ({ from, answer }) => {
+      try {
+        if (pcRef.current && answer) {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          setCallState("in-call");
+        }
+      } catch (err) {
+        console.error("Error applying remote answer:", err);
+      }
     });
 
-    s.on("ice-candidate", async ({ candidate }) => {
-      if (candidate) await pcRef.current.addIceCandidate(candidate);
+    // ICE candidate from remote
+    s.on("ice-candidate", async ({ from, candidate }) => {
+      try {
+        if (pcRef.current && candidate) {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      } catch (err) {
+        console.error("Error adding remote ICE candidate:", err);
+      }
     });
 
-    s.on("end-call", cleanupPeer);
+    // remote ended call
+    s.on("end-call", ({ from }) => {
+      cleanupPeer();
+    });
 
-    return () => s.disconnect();
-  }, []);
+    s.on("error", (err) => {
+      console.error("Socket error:", err);
+    });
 
-  /* ================= CHAT ================= */
-  const joinChat = async (user) => {
+    return () => {
+      cleanupPeer();
+      s.disconnect();
+    };
+  }, [token]);
+
+  // 🔹 Load chat history when selecting user
+  const loadChatHistory = async (roomId) => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/messages/${roomId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const formattedMessages = res.data.map((msg) => ({
+        _id: msg._id,
+        message: msg.content,
+        sender: msg.sender._id === myId ? "me" : msg.sender._id,
+      }));
+
+      setMessagesByRoom((prev) => ({
+        ...prev,
+        [roomId]: formattedMessages,
+      }));
+    } catch (err) {
+      console.error("Error loading chat history:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔹 Join private room and load history
+  const joinChat = (user) => {
     setSelectedUser(user);
     const roomId = [myId, user._id].sort().join("_");
-    setCurrentRoom(roomId);
     socket.emit("join-room", roomId);
-
-    setLoading(true);
-    const res = await axios.get(
-      `${import.meta.env.VITE_BACKEND_URL}/api/messages/${roomId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    setMessagesByRoom((p) => ({
-      ...p,
-      [roomId]: res.data.map((m) => ({
-        _id: m._id,
-        message: m.content,
-        sender: m.sender._id === myId ? "me" : m.sender._id,
-      })),
-    }));
-    setLoading(false);
+    setCurrentRoom(roomId);
+    loadChatHistory(roomId);
   };
 
-  const sendMessage = () => {
-    if (!message.trim()) return;
+  // 🔹 Send private message
+  const sendMessage = async () => {
+    if (!message.trim() || !currentRoom || !socket) return;
 
-    socket.emit("send-message", {
-      roomId: currentRoom,
-      message,
-      receiver: selectedUser._id,
-    });
+    try {
+      socket.emit("send-message", {
+        roomId: currentRoom,
+        message,
+        receiver: selectedUser._id,
+      });
 
-    setMessagesByRoom((p) => ({
-      ...p,
-      [currentRoom]: [...(p[currentRoom] || []), { message, sender: "me", _id: Date.now() }],
-    }));
+      // Add to local state
+      setMessagesByRoom((prev) => ({
+        ...prev,
+        [currentRoom]: [
+          ...(prev[currentRoom] || []),
+          { message, sender: "me", _id: Date.now() },
+        ],
+      }));
 
-    setMessage("");
+      setMessage("");
+    } catch (err) {
+      console.error("Error sending message:", err);
+      alert("Failed to send message");
+    }
   };
 
-  /* ================= WEBRTC ================= */
-  const createPeer = (id) => {
+  // 🔹 Logout function
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    socket?.disconnect();
+    navigate("/");
+  };
+
+  // --- WebRTC helpers ---
+  const cleanupPeer = () => {
+    try {
+      if (pcRef.current) {
+        pcRef.current.ontrack = null;
+        pcRef.current.onicecandidate = null;
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+    } catch (e) {
+      console.warn("Error cleaning peer:", e);
+    }
+
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      setLocalStream(null);
+    }
+    setRemoteStream(null);
+    setIncomingFrom(null);
+    pendingOfferRef.current = null;
+    setCallState("idle");
+  };
+
+  const createPeerConnection = (remoteUserId) => {
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
-    pc.onicecandidate = (e) => e.candidate && socket.emit("ice-candidate", { to: id, candidate: e.candidate });
-    pc.ontrack = (e) => setRemoteStream(e.streams[0]);
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
+      }
+    };
+
+    pc.ontrack = (e) => {
+      setRemoteStream(e.streams[0]);
+    };
 
     pcRef.current = pc;
     return pc;
   };
 
   const startCall = async () => {
+    if (!selectedUser) return alert("Select a user to call");
     setCallState("calling");
-    const pc = createPeer(selectedUser._id);
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit("call-user", { to: selectedUser._id, offer });
+
+    const pc = createPeerConnection(selectedUser._id);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      setLocalStream(stream);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      socket.emit("call-user", { to: selectedUser._id, offer });
+    } catch (err) {
+      console.error("startCall error", err);
+      cleanupPeer();
+    }
   };
 
   const acceptCall = async () => {
-    const pc = createPeer(incomingFrom);
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-    await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit("answer-call", { to: incomingFrom, answer });
+    if (!incomingFrom || !pendingOfferRef.current) return;
     setCallState("in-call");
+    const pc = createPeerConnection(incomingFrom);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      setLocalStream(stream);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socket.emit("answer-call", { to: incomingFrom, answer });
+      pendingOfferRef.current = null;
+    } catch (err) {
+      console.error("acceptCall error", err);
+      cleanupPeer();
+    }
   };
 
-  const cleanupPeer = () => {
-    pcRef.current?.close();
-    localStream?.getTracks().forEach((t) => t.stop());
-    setLocalStream(null);
-    setRemoteStream(null);
-    setCallState("idle");
+  const declineCall = () => {
+    if (incomingFrom) socket.emit("end-call", { to: incomingFrom });
+    cleanupPeer();
   };
 
-  /* ================= UI ================= */
+  const endCall = () => {
+    const otherId = callState === "in-call" ? (incomingFrom === null ? selectedUser?._id : incomingFrom) : selectedUser?._id;
+    if (otherId) socket.emit("end-call", { to: otherId });
+    cleanupPeer();
+  };
+
   return (
-    <div className="flex h-screen bg-slate-900 text-white overflow-hidden">
+    <div className="flex h-screen bg-slate-900 text-white">
 
-      {/* SIDEBAR (hidden on mobile) */}
-      <div className="hidden md:flex md:w-1/4 border-r border-slate-700 flex-col">
-        <div className="p-4 font-bold bg-slate-950">💬 Chats</div>
-        <input className="m-2 p-2 rounded bg-slate-800" placeholder="Search" onChange={(e) => setSearch(e.target.value)} />
+      {/* ================= LEFT PANEL ================= */}
+      <div className="w-1/4 border-r border-slate-700 flex flex-col">
+
+        {/* Header */}
+        <div className="p-4 text-lg font-semibold bg-slate-950 border-b border-slate-700">
+          💬 Chats
+        </div>
+
+        {/* Search */}
+        <input
+          type="text"
+          placeholder="Search user..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="m-2 px-3 py-2 rounded-lg bg-slate-800 outline-none text-sm"
+        />
+
+        {/* Users list */}
         <div className="flex-1 overflow-y-auto">
-          {users.filter(u => u.username.includes(search)).map(u => (
-            <div key={u._id} onClick={() => joinChat(u)}
-              className="p-4 hover:bg-slate-800 cursor-pointer">
-              👤 {u.username}
-            </div>
-          ))}
+          {users.length === 0 ? (
+            <div className="p-4 text-slate-400 text-center">Loading users...</div>
+          ) : (
+            users
+              .filter((u) =>
+                u.username.toLowerCase().includes(search.toLowerCase())
+              )
+              .map((user) => (
+                <div
+                  key={user._id}
+                  onClick={() => joinChat(user)}
+                  className={`p-4 cursor-pointer hover:bg-slate-800 transition
+                    ${selectedUser?._id === user._id ? "bg-slate-800 border-l-2 border-blue-500" : ""}
+                  `}
+                >
+                  <div className="font-medium">👤 {user.username}</div>
+                  <div className="text-xs text-slate-400">
+                    {selectedUser?._id === user._id ? "Active" : "Click to chat"}
+                  </div>
+                </div>
+              ))
+          )}
         </div>
       </div>
 
-      {/* CHAT PANEL */}
-      <div className="w-full md:w-3/4 flex flex-col">
+      {/* ================= RIGHT PANEL ================= */}
+      <div className="w-3/4 flex flex-col">
 
-        {/* TOP BAR */}
-        <div className="p-2 md:p-4 bg-slate-950 flex justify-between items-center">
-          {selectedUser && <button className="md:hidden" onClick={() => setSelectedUser(null)}>←</button>}
-          <span>💬 Chat App</span>
-          <div className="flex gap-2">
-            {selectedUser && callState === "idle" && <button onClick={startCall}>📞</button>}
-            {callState !== "idle" && <button onClick={cleanupPeer}>🔴</button>}
+        {/* 🔥 TOP NAVBAR WITH LOGOUT */}
+        <div className="p-4 bg-slate-950 border-b border-slate-700 flex justify-between items-center">
+          <span className="text-lg font-bold">💬 Chat App</span>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-300">
+              👤 {loggedUser?.username || "User"}
+            </span>
+            {selectedUser && callState === "idle" && (
+              <button
+                onClick={startCall}
+                className="bg-indigo-600 hover:bg-indigo-700 px-3 py-2 rounded-lg text-sm font-medium transition"
+              >
+                📞 Call
+              </button>
+            )}
+
+            {(callState === "in-call" || callState === "calling") && (
+              <button
+                onClick={endCall}
+                className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm font-medium transition"
+              >
+                🔴 Hangup
+              </button>
+            )}
+
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-medium transition"
+            >
+              🚪 Logout
+            </button>
           </div>
         </div>
 
-        {/* VIDEO */}
-        {(callState !== "idle") && (
-          <div className="flex gap-2 p-2 bg-black">
-            <video ref={localVideoRef} autoPlay muted className="w-1/3 h-40" />
-            <video ref={remoteVideoRef} autoPlay className="flex-1 h-40" />
+        {/* Chat header */}
+        <div className="p-4 bg-slate-900 border-b border-slate-700">
+          {selectedUser ? (
+            <div className="font-semibold">
+              💬 Chat with {selectedUser.username}
+            </div>
+          ) : (
+            <div className="text-slate-400">
+              👈 Select a user from the list to start chatting
+            </div>
+          )}
+        </div>
+
+        {/* Video area for calls */}
+        {(callState === "in-call" || callState === "calling" || callState === "incoming") && (
+          <div className="p-2 bg-slate-900 border-b border-slate-700 flex gap-4 items-start">
+            <div className="w-1/3 bg-black rounded overflow-hidden">
+              <video
+                autoPlay
+                playsInline
+                muted
+                ref={(el) => {
+                  if (el && localStream) el.srcObject = localStream;
+                }}
+                className="w-full h-48 object-cover"
+              />
+            </div>
+            <div className="flex-1 bg-black rounded overflow-hidden">
+              <video
+                autoPlay
+                playsInline
+                ref={(el) => {
+                  if (el && remoteStream) el.srcObject = remoteStream;
+                }}
+                className="w-full h-48 object-cover"
+              />
+            </div>
           </div>
         )}
 
-        {/* MESSAGES */}
-        <div className="flex-1 overflow-y-auto p-3">
-          {messages.map(m => (
-            <div key={m._id} className={`flex ${m.sender === "me" ? "justify-end" : ""}`}>
-              <div className="bg-slate-700 px-3 py-2 rounded mb-2">{m.message}</div>
+        {/* Incoming call UI */}
+        {callState === "incoming" && (
+          <div className="p-4 bg-yellow-600 text-black flex items-center justify-between">
+            <div>📞 Incoming call from {incomingFrom === myId ? "You" : incomingFrom}</div>
+            <div className="flex gap-2">
+              <button onClick={acceptCall} className="bg-green-600 px-3 py-2 rounded">Accept</button>
+              <button onClick={declineCall} className="bg-red-600 px-3 py-2 rounded">Decline</button>
+            </div>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {loading && (
+            <div className="text-center text-slate-400">Loading messages...</div>
+          )}
+
+          {selectedUser && !loading && messages.length === 0 && (
+            <div className="text-center text-slate-500">
+              No messages yet. Start a conversation! 💬
+            </div>
+          )}
+
+          {messages.map((m) => (
+            <div
+              key={m._id}
+              className={`flex ${m.sender === "me" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[60%] px-4 py-2 rounded-2xl text-sm
+                  ${m.sender === "me"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-700 text-white"
+                  }`}
+              >
+                {m.message}
+              </div>
             </div>
           ))}
         </div>
 
-        {/* INPUT */}
-        {selectedUser && (
-          <div className="p-2 bg-slate-950 flex gap-2 sticky bottom-0">
+        {/* Input */}
+        {selectedUser ? (
+          <div className="p-4 bg-slate-950 border-t border-slate-700 flex gap-2">
             <input
-              className="flex-1 p-2 rounded bg-slate-800"
+              className="flex-1 bg-slate-800 rounded-lg px-4 py-2 outline-none text-white placeholder-slate-400"
+              placeholder={`Message ${selectedUser.username}...`}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
             />
-            <button onClick={sendMessage} className="bg-green-600 px-4 rounded">Send</button>
+            <button
+              onClick={sendMessage}
+              disabled={!message.trim()}
+              className="bg-green-500 hover:bg-green-600 disabled:bg-gray-500 px-6 py-2 rounded-lg font-medium transition"
+            >
+              Send
+            </button>
+          </div>
+        ) : (
+          <div className="p-4 bg-slate-950 border-t border-slate-700 text-slate-400 text-center">
+            Select a user to start messaging
           </div>
         )}
       </div>
